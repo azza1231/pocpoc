@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Controlled Origin B</title>
+<style>body{font:14px/1.4 system-ui;margin:12px}pre{white-space:pre-wrap}</style>
+<strong>Controlled Origin B iframe</strong>
+<pre id="status"></pre>
+<script>
+(() => {
+  'use strict';
+
+  const query = new URLSearchParams(location.search);
+  const topOrigin = query.get('topOrigin');
+  const markerUrl = query.get('markerUrl');
+  const status = document.getElementById('status');
+
+  if (!topOrigin || new URL(topOrigin).origin !== topOrigin) {
+    throw new Error('A valid topOrigin query parameter is required');
+  }
+
+  function report(event, detail = {}) {
+    const message = {
+      lab: 'core-frame-provenance',
+      event,
+      childOrigin: location.origin,
+      ...detail
+    };
+    status.textContent += JSON.stringify(message) + '\n';
+    parent.postMessage(message, topOrigin);
+  }
+
+  function nativePost(message) {
+    const serialized = JSON.stringify(message);
+
+    // Android WebMessageListener / JavaScriptInterface surface.
+    if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+      window.ReactNativeWebView.postMessage(serialized);
+      return 'window.ReactNativeWebView';
+    }
+
+    // Raw WKScriptMessageHandler surface. The main-frame-only Core wrapper is
+    // intentionally not needed for this provenance regression.
+    const iosHandler = window.webkit && window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.ReactNativeWebView;
+    if (iosHandler && typeof iosHandler.postMessage === 'function') {
+      iosHandler.postMessage(serialized);
+      return 'window.webkit.messageHandlers.ReactNativeWebView';
+    }
+
+    throw new Error('No Core React Native bridge is visible in Origin B');
+  }
+
+  function sendProviderProbe(id, claimedOrigin) {
+    const wrapper = {
+      method: 'provider_request',
+      payload: JSON.stringify({
+        id: Number(id),
+        origin: claimedOrigin,
+        request: { method: 'wallet_getPermissions', params: [] }
+      })
+    };
+    const bridge = nativePost(wrapper);
+    report('B_PROVIDER_REQUEST_POSTED', { id, claimedOrigin, bridge });
+  }
+
+  addEventListener('message', event => {
+    if (event.source !== parent || event.origin !== topOrigin) return;
+    const data = event.data;
+    if (!data || data.lab !== 'core-frame-provenance') return;
+
+    try {
+      if (data.command === 'PROVIDER_CALLBACK_PROBE') {
+        sendProviderProbe(data.id, data.claimedOrigin);
+      } else if (data.command === 'WINDOW_OPEN_PROBE') {
+        if (!markerUrl || !/^https?:\/\//i.test(markerUrl)) {
+          throw new Error('A controlled HTTP(S) marker URL is required');
+        }
+        const bridge = nativePost({ method: 'window_open', payload: markerUrl });
+        report('B_WINDOW_OPEN_POSTED', { markerUrl, bridge });
+      }
+    } catch (error) {
+      report('B_ERROR', { message: String(error) });
+    }
+  });
+
+  report('CHILD_READY', {
+    href: location.href,
+    androidBridge: Boolean(window.ReactNativeWebView),
+    iosRawBridge: Boolean(window.webkit?.messageHandlers?.ReactNativeWebView)
+  });
+})();
+</script>
+</html>
