@@ -37,6 +37,11 @@ addEventListener('message',event=>{
       return request(id,'personal_sign',[hex(message),account],{account,message});
     }
 
+    if(type==='BLIND'){
+      const digest='0x'+nonce(32);
+      return request(id,'eth_sign',[account,digest],{account,digest,safety:'random lab digest; always reject'});
+    }
+
     if(type==='PERMIT'){
       const typedData={
         types:{
