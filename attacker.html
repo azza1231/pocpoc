@@ -18,6 +18,7 @@ const sol = () => window.phantom?.solana || (window.solana?.isPhantom ? window.s
 const rnwv = () => window.ReactNativeWebView;
 const wk = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ReactNativeWebView;
 const hex = s => '0x' + [...new TextEncoder().encode(s)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const to = (p, ms, label) => Promise.race([ Promise.resolve(p), new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT:' + label)), ms)) ]);
 
 function surface(){
   return {
@@ -49,11 +50,11 @@ addEventListener('message', async e => {
       const p = evm();
       if(!p){ toA({ type:'RESULT', probe:'EVM', reason:'no EVM provider in B', detail:{} }); return; }
       let obtainedAccount = '', detail = {};
-      try{ const accts = await p.request({ method:'eth_accounts', params:[] });
+      try{ const accts = await to(p.request({ method:'eth_accounts', params:[] }), 3500, 'eth_accounts');
         detail.eth_accounts = accts;
         if((accts||[]).some(a => a.toLowerCase() === (account||'').toLowerCase())) obtainedAccount = account;
       }catch(err){ detail.eth_accounts_err = err.message; }
-      try{ detail.chainId = await p.request({ method:'eth_chainId' }); }catch{}
+      try{ detail.chainId = await to(p.request({ method:'eth_chainId' }), 3500, 'eth_chainId'); }catch(err){ detail.chainId_err = err.message; }
       toA({ type:'RESULT', probe:'EVM', obtainedAccount, reachedPrompt:false, detail });
       (async()=>{ try{ const msg = 'CROSS-ORIGIN from ' + location.origin + ' as A. REJECT.';
           await p.request({ method:'personal_sign', params:[hex(msg), account] });
@@ -68,7 +69,7 @@ addEventListener('message', async e => {
       detail.isConnected = !!p.isConnected;
       detail.publicKey = p.publicKey?.toString() || null;
       if(detail.publicKey && detail.publicKey === account) obtainedAccount = account;
-      try{ const r = await p.connect({ onlyIfTrusted:true });
+      try{ const r = await to(p.connect({ onlyIfTrusted:true }), 3500, 'connect_onlyIfTrusted');
         detail.connect_onlyIfTrusted = r?.publicKey?.toString() || p.publicKey?.toString() || null;
         if(detail.connect_onlyIfTrusted && detail.connect_onlyIfTrusted === account) obtainedAccount = account;
       }catch(err){ detail.connect_onlyIfTrusted_err = err.message; }
