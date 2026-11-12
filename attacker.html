@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Origin B</title>
+<title>Origin B — cross-origin probe</title>
 </head>
 <body>
 <p>Origin B (cross-origin). Controlled by the attacker.</p>
@@ -48,31 +48,35 @@ addEventListener('message', async e => {
     if(cmd === 'EVM'){
       const p = evm();
       if(!p){ toA({ type:'RESULT', probe:'EVM', reason:'no EVM provider in B', detail:{} }); return; }
-      let obtainedAccount = '', reachedPrompt = false, detail = {};
+      let obtainedAccount = '', detail = {};
       try{ const accts = await p.request({ method:'eth_accounts', params:[] });
         detail.eth_accounts = accts;
         if((accts||[]).some(a => a.toLowerCase() === (account||'').toLowerCase())) obtainedAccount = account;
       }catch(err){ detail.eth_accounts_err = err.message; }
-      try{ const msg = 'CROSS-ORIGIN TEST from ' + location.origin + ' claiming A. REJECT.';
-        await p.request({ method:'personal_sign', params:[hex(msg), account] });
-        reachedPrompt = true;
-      }catch(err){ detail.personal_sign_err = { code: err.code, message: err.message };
-        if(err.code === 4001) reachedPrompt = true; }
-      toA({ type:'RESULT', probe:'EVM', obtainedAccount, reachedPrompt, detail });
+      try{ detail.chainId = await p.request({ method:'eth_chainId' }); }catch{}
+      toA({ type:'RESULT', probe:'EVM', obtainedAccount, reachedPrompt:false, detail });
+      (async()=>{ try{ const msg = 'CROSS-ORIGIN from ' + location.origin + ' as A. REJECT.';
+          await p.request({ method:'personal_sign', params:[hex(msg), account] });
+          toA({ type:'RESULT', probe:'EVM', obtainedAccount, reachedPrompt:true, detail:{ sign:'prompt reached' } });
+        }catch(err){ toA({ type:'RESULT', probe:'EVM', obtainedAccount, reachedPrompt: err.code===4001, detail:{ personal_sign_err:{ code:err.code, message:err.message } } }); } })();
       return;
     }
     if(cmd === 'SOL'){
       const p = sol();
       if(!p){ toA({ type:'RESULT', probe:'SOL', reason:'no Solana provider in B', detail:{} }); return; }
-      let obtainedAccount = '', reachedPrompt = false, detail = {};
+      let obtainedAccount = '', detail = {};
       detail.isConnected = !!p.isConnected;
       detail.publicKey = p.publicKey?.toString() || null;
       if(detail.publicKey && detail.publicKey === account) obtainedAccount = account;
-      try{ const enc = new TextEncoder().encode('CROSS-ORIGIN TEST from ' + location.origin + ' claiming A. REJECT.');
-        await p.signMessage(enc, 'utf8'); reachedPrompt = true;
-      }catch(err){ detail.signMessage_err = { code: err.code, message: err.message };
-        if((err.code === 4001) || /reject/i.test(err.message||'')) reachedPrompt = true; }
-      toA({ type:'RESULT', probe:'SOL', obtainedAccount, reachedPrompt, detail });
+      try{ const r = await p.connect({ onlyIfTrusted:true });
+        detail.connect_onlyIfTrusted = r?.publicKey?.toString() || p.publicKey?.toString() || null;
+        if(detail.connect_onlyIfTrusted && detail.connect_onlyIfTrusted === account) obtainedAccount = account;
+      }catch(err){ detail.connect_onlyIfTrusted_err = err.message; }
+      toA({ type:'RESULT', probe:'SOL', obtainedAccount, reachedPrompt:false, detail });
+      (async()=>{ try{ const enc = new TextEncoder().encode('CROSS-ORIGIN from ' + location.origin + ' as A. REJECT.');
+          await p.signMessage(enc, 'utf8');
+          toA({ type:'RESULT', probe:'SOL', obtainedAccount, reachedPrompt:true, detail:{ sign:'prompt reached' } });
+        }catch(err){ toA({ type:'RESULT', probe:'SOL', obtainedAccount, reachedPrompt:(err.code===4001)||/reject/i.test(err.message||''), detail:{ signMessage_err:{ code:err.code, message:err.message } } }); } })();
       return;
     }
     if(cmd === 'RAW'){
