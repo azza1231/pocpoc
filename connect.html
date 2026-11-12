@@ -56,8 +56,8 @@ function b58d(str){ let b=[0]; for(let i=0;i<str.length;i++){ let v=ALPH.indexOf
 
 function keypair(){
   let kp;
-  try{ const s = sessionStorage.getItem(KEY); if(s){ const o=JSON.parse(s); kp={ publicKey:b58d(o.pk), secretKey:b58d(o.sk) }; } }catch{}
-  if(!kp){ kp = nacl.box.keyPair(); try{ sessionStorage.setItem(KEY, JSON.stringify({ pk:b58e(kp.publicKey), sk:b58e(kp.secretKey) })); }catch{} }
+  try{ const s = localStorage.getItem(KEY); if(s){ const o=JSON.parse(s); kp={ publicKey:b58d(o.pk), secretKey:b58d(o.sk) }; } }catch{}
+  if(!kp){ kp = nacl.box.keyPair(); try{ localStorage.setItem(KEY, JSON.stringify({ pk:b58e(kp.publicKey), sk:b58e(kp.secretKey) })); }catch{} }
   return kp;
 }
 
@@ -81,11 +81,19 @@ function buildLink(){
 
 function handleReturn(){
   const q = new URLSearchParams(location.search);
-  if(q.get('errorCode')){ log('Phantom returned error: ' + q.get('errorCode') + ' ' + (q.get('errorMessage')||'')); return; }
+  const all = [...q.entries()];
+  if(all.length){ log('— RAW RETURN PARAMS FROM PHANTOM —'); for(const [k,v] of all) log('  ' + k + ' = ' + v); }
+  else { log('No return params yet (tap connect, approve, Phantom redirects back here).'); }
+  if(q.get('errorCode')){
+    log('>> Phantom REJECTED: errorCode=' + q.get('errorCode') + ' ' + (q.get('errorMessage')||''));
+    $('#verdict').className = 'verdict ok';
+    $('#verdict').textContent = 'Phantom rejected the mismatch (errorCode=' + q.get('errorCode') + ') → app_url↔redirect binding likely ENFORCED = secure for this path.';
+    return;
+  }
   const phantomPubB58 = q.get('phantom_encryption_public_key');
-  const nonceB58 = q.get('data') ? q.get('nonce') : null;
+  const nonceB58 = q.get('nonce');
   const dataB58 = q.get('data');
-  if(!phantomPubB58 || !dataB58 || !nonceB58) return;
+  if(!phantomPubB58 || !dataB58 || !nonceB58){ log('(no session payload in return — see raw params above)'); return; }
   log('— RETURN FROM PHANTOM —');
   log('phantom_encryption_public_key: ' + phantomPubB58);
   try{
